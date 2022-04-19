@@ -49,14 +49,16 @@ packet_t *packetize(char *buffer, int length, int *count) {
         }
         currPacket.checksum = checksum(currPacket.payload, MAX_PAYLOAD_LENGTH);
         currPacket.payload_length = MAX_PAYLOAD_LENGTH;
+        packets[i] = currPacket;
     }
     packet_t lastPacket = packets[*count - 1];
     lastPacket.type = LAST_DATA;
     for (int i = 0; i < lastPacketLength; i++) {
-        lastPacket.payload[i] = buffer[MAX_PAYLOAD_LENGTH * (*count -1) + i];
+        lastPacket.payload[i] = buffer[MAX_PAYLOAD_LENGTH * (*count - 1) + i];
     }
     lastPacket.checksum = checksum(lastPacket.payload, lastPacketLength);
     lastPacket.payload_length = lastPacketLength;
+    packets[*count - 1] = lastPacket;
     return packets;
 }
 
@@ -112,39 +114,39 @@ static void *rtp_recv_thread(void *void_ptr) {
                 pthread_cond_signal(&connection->send_cond);
                 break;
             }
-            if ((packet.type == DATA || packet.type == LAST_DATA) && packet.checksum == checksum(packet.payload, packet.payload_length) ) {
-                if (buffer == NULL) {
-                    buffer = malloc(0);
-                }
-                buffer = realloc(buffer, (buffer_length * sizeof(char) + sizeof(char) * packet.payload_length));
-                for (int i = 0; i < packet.payload_length; i++) {
+            if (packet.type == DATA || packet.type == LAST_DATA) {
+                if (packet.checksum == checksum(packet.payload, packet.payload_length)) {
+                    if (buffer == NULL) {
+                        buffer = (char *) malloc(packet.payload_length * (sizeof(char)));
+                    } else {
+                        buffer = realloc(buffer, (buffer_length * sizeof(char) + packet.payload_length * sizeof(char)));
+                    }
+                    for (int i = 0; i < packet.payload_length; i++) {
                     buffer[buffer_length] = packet.payload[i];
                     buffer_length++;
+                    }
+                    packet_t * ackPacket = (packet_t *) malloc(sizeof(packet_t));
+                    ackPacket->type = ACK;
+                    net_send_packet(connection->net_connection_handle, ackPacket);
                 }
-                packet_t * ackPacket = (packet_t *) malloc(sizeof(packet_t));
-                ackPacket->type = ACK;
-                net_send_packet(connection->net_connection_handle, ackPacket);
-            } else if (packet.type == NACK) {
+                else {
+                    if (packet.type == LAST_DATA) {
+                        packet.type = DATA;
+                    }
+                    packet_t * nackPacket = (packet_t *) malloc(sizeof(packet_t));
+                    nackPacket->type = NACK;
+                    net_send_packet(connection->net_connection_handle, nackPacket);
+                }
+            } else if (packet.type == NACK || packet.type == ACK) {
                 pthread_mutex_lock(&connection->ack_mutex);
+                if (packet.type == ACK) {
+                    connection->ackOrNack = 1;
+                } else {
+                    connection->ackOrNack = 0;
+                }
                 connection->received = 1;
-                connection->ackOrNack = 0;
                 pthread_cond_signal(&connection->ack_cond);
                 pthread_mutex_unlock(&connection->ack_mutex);
-            } else if (packet.type == ACK) {
-                pthread_mutex_lock(&connection->ack_mutex);
-                connection->received = 1;
-                connection->ackOrNack = 1;
-                pthread_cond_signal(&connection->ack_cond);
-                pthread_mutex_unlock(&connection->ack_mutex);
-            }else if (packet.type == LAST_DATA && packet.checksum != checksum(packet.payload, packet.payload_length)) {
-                packet_t * nackPacket = (packet_t *) malloc(sizeof(packet_t));
-                nackPacket->type = NACK;
-                net_send_packet(connection->net_connection_handle, nackPacket);
-                packet.type = DATA;
-            } else if (packet.type == DATA && packet.checksum != checksum(packet.payload, packet.payload_length)) {
-                packet_t * nackPacket = (packet_t *) malloc(sizeof(packet_t));
-                nackPacket->type = NACK;
-                net_send_packet(connection->net_connection_handle, nackPacket);
             }
 
             /*  ----  FIXME  ----
@@ -245,13 +247,11 @@ static void *rtp_send_thread(void *void_ptr) {
                 pthread_cond_wait(&connection->ack_cond, &connection->ack_mutex);
             }
             connection->received = 0;
-            pthread_mutex_unlock(&connection->ack_mutex);
             if (connection->ackOrNack == 0) {
                 i--;
             }
-
+            pthread_mutex_unlock(&connection->ack_mutex);
         }
-
         free(packet_array);
         free(message->buffer);
         free(message);
