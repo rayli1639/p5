@@ -33,8 +33,8 @@ typedef struct message {
 packet_t *packetize(char *buffer, int length, int *count) {
 
     packet_t *packets;
-    int packetCount = length / MAX_PAYLOAD_LENGTH;
-    *count = length % MAX_PAYLOAD_LENGTH;
+    *count = length / MAX_PAYLOAD_LENGTH;
+    int lastPacketLength = length % MAX_PAYLOAD_LENGTH;
     if (lastPacketLength != 0) {
         (*count)++;
     } else {
@@ -45,15 +45,15 @@ packet_t *packetize(char *buffer, int length, int *count) {
         packet_t currPacket = packets[i];
         currPacket.type = DATA;
         for (int j = 0; j < MAX_PAYLOAD_LENGTH; j++) {
-            charPacket.payload[j] = buffer[MAX_PAYLOAD_LENGTH * i + j];
+            currPacket.payload[j] = buffer[MAX_PAYLOAD_LENGTH * i + j];
         }
-        currPacket.checksum = checksum(charPacket.payload, MAX_PAYLOAD_LENGTH);
+        currPacket.checksum = checksum(currPacket.payload, MAX_PAYLOAD_LENGTH);
         currPacket.payload_length = MAX_PAYLOAD_LENGTH;
     }
-    packet_t lastPacket = packets[*count - 1]
+    packet_t lastPacket = packets[*count - 1];
     lastPacket.type = LAST_DATA;
     for (int i = 0; i < lastPacketLength; i++) {
-        lastPacket.payload[i] = buffer[MAX_PAYLOAD_LENGTH * (*count -1) + i]
+        lastPacket.payload[i] = buffer[MAX_PAYLOAD_LENGTH * (*count -1) + i];
     }
     lastPacket.checksum = checksum(lastPacket.payload, lastPacketLength);
     lastPacket.payload_length = lastPacketLength;
@@ -76,7 +76,7 @@ packet_t *packetize(char *buffer, int length, int *count) {
  * @returns calcuated checksum
  */
 int checksum(char *buffer, int length) {
-    int res;
+    int res = 0;
     for (int i = 0; i < length; i++) {
         int curr = buffer[i];
         if (i % 2 == 0) {
@@ -120,9 +120,9 @@ static void *rtp_recv_thread(void *void_ptr) {
                 if (packet.type == LAST_DATA) {
                     packet_t * ackPacket = (packet_t *) malloc(sizeof(packet_t));
                     ackPacket->type = ACK;
-                    net_send_packet(connection->net_connection_handle, *ackPacket);
+                    net_send_packet(connection->net_connection_handle, ackPacket);
                 }
-            } else if (packet.type == NACK {
+            } else if (packet.type == NACK) {
                 pthread_mutex_lock(&connection->ack_mutex);
                 pthread_cond_signal(&connection->ack_cond);
                 pthread_mutex_unlock(&connection->ack_mutex);
@@ -137,7 +137,7 @@ static void *rtp_recv_thread(void *void_ptr) {
             }else if (packet.type == LAST_DATA && packet.checksum != checksum(packet.payload, packet.payload_length)) {
                 packet_t * nackPacket = (packet_t *) malloc(sizeof(packet_t));
                 nackPacket->type = NACK;
-                net_send_packet(connection->net_connection_handle, *nackPacket);
+                net_send_packet(connection->net_connection_handle, nackPacket);
                 packet.type = DATA;
             }
 
@@ -177,11 +177,11 @@ static void *rtp_recv_thread(void *void_ptr) {
             * 2. Signal the client thread that a message has been received.
             */
             message->buffer = buffer;
-            message->lenth = buffer_length
-            pthread_mutex_lock(&recv_queue);
+            message->length = buffer_length;
+            pthread_mutex_lock(&connection->recv_mutex);
             queue_add(&connection->recv_queue, message);
             pthread_cond_signal(&connection->recv_cond);
-            pthread_mutex_unlock(&recv_queue);
+            pthread_mutex_unlock(&connection->recv_mutex);
         } else free(buffer);
 
     } while (connection->alive == 1);
