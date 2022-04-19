@@ -113,6 +113,10 @@ static void *rtp_recv_thread(void *void_ptr) {
                 break;
             }
             if ((packet.type == DATA || packet.type == LAST_DATA) && packet.checksum == checksum(packet.payload, packet.payload_length) ) {
+                if (buffer == NULL) {
+                    buffer = malloc(0);
+                }
+                buffer = realloc(buffer, (buffer_length * sizeof(char) + sizeof(char) * packet.payload_length));
                 for (int i = 0; i < packet.payload_length; i++) {
                     buffer[buffer_length] = packet.payload[i];
                     buffer_length++;
@@ -137,6 +141,10 @@ static void *rtp_recv_thread(void *void_ptr) {
                 nackPacket->type = NACK;
                 net_send_packet(connection->net_connection_handle, nackPacket);
                 packet.type = DATA;
+            } else if (packet.type == DATA && packet.checksum != checksum(packet.payload, packet.payload_length)) {
+                packet_t * nackPacket = (packet_t *) malloc(sizeof(packet_t));
+                nackPacket->type = NACK;
+                net_send_packet(connection->net_connection_handle, nackPacket);
             }
 
             /*  ----  FIXME  ----
@@ -236,11 +244,9 @@ static void *rtp_send_thread(void *void_ptr) {
             while (connection->received == 0) {
                 pthread_cond_wait(&connection->ack_cond, &connection->ack_mutex);
             }
-            pthread_mutex_unlock(&connection->ack_mutex);
             connection->received = 0;
-            if (connection->ackOrNack == 1) { // ack
-                continue; 
-            } else if (connection->ackOrNack == 0) {
+            pthread_mutex_unlock(&connection->ack_mutex);
+            if (connection->ackOrNack == 0) {
                 i--;
             }
 
