@@ -19,6 +19,9 @@ typedef struct rtp_connection {
 
     /* FIX ME - insert any needed members */
 
+    int ackOrNack;
+    int received;
+
     pthread_cond_t ack_cond;
     pthread_mutex_t ack_mutex;
 
